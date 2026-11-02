@@ -18,8 +18,11 @@ const QUICK: &[&str] = &[
 /// Slower; run with `cargo test --release -- --ignored`.
 const SLOW: &[&str] = &["25fv47", "80bau3b", "scrs8", "stair", "perold"];
 
-/// Not yet solved within the iteration limit: greenbea (#1) and klein1
-/// infeasibility detection (#2).
+/// Not solved within the iteration limit.
+/// - greenbea (#1): cuPDLPx doesn't reach 1e-6 within 1M iterations either,
+///   with a gap of 9e-2 without presolve and 3e-3 with it. That's a limit of
+///   the method, not a bug here. See the baseline on #1.
+/// - klein1: its infeasibility isn't detected yet (#2).
 const KNOWN_HARD: &[&str] = &["greenbea", "klein1"];
 
 fn data_dir() -> PathBuf {
