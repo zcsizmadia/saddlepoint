@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zcsizmadia/saddlepoint"
+authors = ["Zoltan Csizmadia <zcsizmadia@gmail.com>"]
+
+[workspace.dependencies]
+saddlepoint-core = { path = "crates/saddlepoint-core", version = "0.0.1" }
+saddlepoint-cpu = { path = "crates/saddlepoint-cpu", version = "0.0.1" }
+saddlepoint-io = { path = "crates/saddlepoint-io", version = "0.0.1" }
+saddlepoint-check = { path = "crates/saddlepoint-check", version = "0.0.1" }
+rayon = "1.12"
+thiserror = "2"
+cudarc = { version = "0.19.10", default-features = false, features = ["std", "driver", "nvrtc", "cuda-13020", "dynamic-loading"] }
+
+[profile.release]
+debug = 1
+
+# The solver tests are numeric loops; unoptimised builds make them crawl.
+[profile.test]
+opt-level = 3

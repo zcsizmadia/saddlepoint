@@ -1,0 +1,20 @@
+[package]
+name = "saddlepoint-cli"
+description = "Command-line driver for the saddlepoint solver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "saddlepoint"
+path = "src/main.rs"
+
+[dependencies]
+saddlepoint-core.workspace = true
+saddlepoint-cpu.workspace = true
+saddlepoint-io.workspace = true
+saddlepoint-check.workspace = true

@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      # The CUDA crate builds without a toolkit (cudarc loads libraries at
+      # run time); its probe needs a GPU, so CI only compiles it.
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace --exclude saddlepoint-cuda
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all --check

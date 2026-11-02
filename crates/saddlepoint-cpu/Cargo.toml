@@ -1,0 +1,17 @@
+[package]
+name = "saddlepoint-cpu"
+description = "CPU (rayon) reference backend for the saddlepoint solver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+saddlepoint-core.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+saddlepoint-io.workspace = true
+saddlepoint-check.workspace = true

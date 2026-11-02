@@ -1,0 +1,13 @@
+[package]
+name = "saddlepoint-check"
+description = "Independent KKT checker for LP solutions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Only the problem types are used; nothing from the solver or scaling code.
+saddlepoint-core.workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "saddlepoint-io"
+description = "MPS reader for the saddlepoint solver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+saddlepoint-core.workspace = true
+thiserror.workspace = true
