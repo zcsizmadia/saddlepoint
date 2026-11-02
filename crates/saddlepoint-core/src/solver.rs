@@ -38,8 +38,12 @@ pub struct SolverParams {
     pub restart_sufficient: f64,
     pub restart_necessary: f64,
     pub restart_artificial: f64,
-    /// Smoothing θ of the primal weight update (1 = no memory).
-    pub primal_weight_smoothing: f64,
+    /// PID gains for the primal-weight controller (cuPDLPx defaults).
+    pub pid_kp: f64,
+    pub pid_ki: f64,
+    pub pid_kd: f64,
+    /// Discount of the controller's integral term per restart.
+    pub pid_discount: f64,
     pub power_iterations: usize,
     pub scaling: ScalingParams,
     /// Print a progress line every this many checks (0 = silent).
@@ -57,9 +61,12 @@ impl Default for SolverParams {
             step_size_factor: 0.998,
             reflection: 1.0,
             restart_sufficient: 0.2,
-            restart_necessary: 0.8,
+            restart_necessary: 0.5,
             restart_artificial: 0.36,
-            primal_weight_smoothing: 0.5,
+            pid_kp: 0.99,
+            pid_ki: 0.01,
+            pid_kd: 0.0,
+            pid_discount: 0.3,
             power_iterations: 200,
             scaling: ScalingParams::default(),
             log_every_checks: 0,
@@ -152,6 +159,7 @@ struct Solver<'a, B: Backend> {
     aty: B::Vector,
     tmp_n: B::Vector,
     tmp_m: B::Vector,
+    tmp_m2: B::Vector,
 }
 
 impl<'a, B: Backend> Solver<'a, B> {
@@ -174,6 +182,7 @@ impl<'a, B: Backend> Solver<'a, B> {
             aty: v(&zn)?,
             tmp_n: v(&zn)?,
             tmp_m: v(&zm)?,
+            tmp_m2: v(&zm)?,
             backend,
             problem,
             params,
@@ -227,6 +236,23 @@ impl<'a, B: Backend> Solver<'a, B> {
         })
     }
 
+    /// Fixed-point residual `‖z - T(z)‖_P` in the PDHG metric
+    /// `P = [ω/η I, A'ᵀ; A', 1/(ηω) I]`, where `T(z) = z_t`.
+    fn fixed_point_residual(&mut self, eta: f64, omega: f64) -> Result<f64, SolveError> {
+        let b = self.backend;
+        b.sub(&self.x_t, &self.x, &mut self.tmp_n).map_err(be)?;
+        b.sub(&self.y_t, &self.y, &mut self.tmp_m2).map_err(be)?;
+        b.spmv(&self.dev, &self.tmp_n, &mut self.tmp_m).map_err(be)?;
+        let dx2 = b.norm_sq(&self.tmp_n).map_err(be)?;
+        let dy2 = b.norm_sq(&self.tmp_m2).map_err(be)?;
+        let cross = b.dot(&self.tmp_m2, &self.tmp_m).map_err(be)?;
+        let r2 = omega / eta * dx2 + dy2 / (eta * omega) + 2.0 * cross;
+        if !r2.is_finite() {
+            return Err(SolveError::Numerical("iterates are not finite"));
+        }
+        Ok(r2.max(0.0).sqrt())
+    }
+
     /// Tests `z_t - z_anchor` as an infeasibility certificate.
     fn infeasibility(&mut self) -> Result<Option<Status>, SolveError> {
         let b = self.backend;
@@ -254,19 +280,19 @@ impl<'a, B: Backend> Solver<'a, B> {
         let b = self.backend;
 
         let eta = p.step_size_factor / self.estimate_norm()?;
-        let c_norm_scaled = norm2(&self.scaled.c);
-        let b_norm_scaled = finite_bound_norm(&self.scaled.lc, &self.scaled.uc);
-        let mut omega =
-            if c_norm_scaled > 1e-10 && b_norm_scaled > 1e-10 { c_norm_scaled / b_norm_scaled } else { 1.0 };
-
         let b_norm = finite_bound_norm(&self.problem.lc, &self.problem.uc);
         let c_norm = norm2(&self.problem.c);
+
+        // Initial primal weight, as in cuPDLPx: 1 when bounds and objective
+        // are rescaled, otherwise the ratio of the unscaled norms.
+        let mut omega = if p.scaling.bound_objective_rescaling { 1.0 } else { (1.0 + c_norm) / (1.0 + b_norm) };
+        let mut pid = PidState::new(omega);
 
         let mut total: u64 = 0;
         let mut k: u64 = 0;
         let mut restarts: u64 = 0;
         let mut checks: u64 = 0;
-        let mut ref_residual: Option<f64> = None;
+        let mut anchor_residual = f64::INFINITY;
         let mut prev_residual = f64::INFINITY;
 
         let (status, kkt) = loop {
@@ -278,29 +304,32 @@ impl<'a, B: Backend> Solver<'a, B> {
 
             total += 1;
             let check = total.is_multiple_of(p.check_every) || total >= p.max_iterations;
+            // At k = 0 the iterate is the anchor, so this measures r(z_anchor),
+            // the reference for the restart criteria.
+            let residual = if check || k == 0 { self.fixed_point_residual(eta, omega)? } else { 0.0 };
+            if k == 0 {
+                anchor_residual = residual;
+            }
             let w = (k + 1) as f64 / (k + 2) as f64;
-            let rx = b.halpern_step(&mut self.x, &self.x_t, &self.x_anchor, w, p.reflection, check).map_err(be)?;
-            let ry = b.halpern_step(&mut self.y, &self.y_t, &self.y_anchor, w, p.reflection, check).map_err(be)?;
+            b.halpern_step(&mut self.x, &self.x_t, &self.x_anchor, w, p.reflection).map_err(be)?;
+            b.halpern_step(&mut self.y, &self.y_t, &self.y_anchor, w, p.reflection).map_err(be)?;
             k += 1;
 
             if !check {
                 continue;
             }
             checks += 1;
-            let residual = (omega * rx + ry / omega).sqrt();
-            if !residual.is_finite() {
-                return Err(SolveError::Numerical("iterates are not finite"));
-            }
             let kkt = self.kkt()?;
             if p.log_every_checks > 0 && checks.is_multiple_of(p.log_every_checks) {
                 eprintln!(
-                    "{total:>9} {:>14.6e} {:>14.6e} {:>9.2e} {:>9.2e} {:>9.2e} {omega:>9.2e} {restarts:>5} {:>8.2}s",
+                    "{total:>9} {:>14.6e} {:>14.6e} {:>9.2e} {:>9.2e} {:>9.2e} {omega:>9.2e} {restarts:>5} {:>8.2}s {k:>7} {:>9.2e}",
                     kkt.primal_obj,
                     kkt.dual_obj,
                     kkt.primal_res,
                     kkt.dual_res,
                     kkt.gap(),
-                    start.elapsed().as_secs_f64()
+                    start.elapsed().as_secs_f64(),
+                    residual / anchor_residual
                 );
             }
             if kkt.converged(p.tolerance, b_norm, c_norm) {
@@ -317,7 +346,7 @@ impl<'a, B: Backend> Solver<'a, B> {
             }
 
             // Restart decision on the fixed-point residual.
-            let r0 = *ref_residual.get_or_insert(residual);
+            let r0 = anchor_residual;
             let restart = residual <= p.restart_sufficient * r0
                 || (residual <= p.restart_necessary * r0 && residual > prev_residual)
                 || k as f64 >= p.restart_artificial * total as f64;
@@ -325,10 +354,9 @@ impl<'a, B: Backend> Solver<'a, B> {
             if restart {
                 let dx = b.distance_sq(&self.x_t, &self.x_anchor).map_err(be)?.sqrt();
                 let dy = b.distance_sq(&self.y_t, &self.y_anchor).map_err(be)?.sqrt();
-                if dx > 1e-10 && dy > 1e-10 {
-                    let th = p.primal_weight_smoothing;
-                    omega = (th * (dy / dx).ln() + (1.0 - th) * omega.ln()).exp();
-                }
+                let rel_primal = kkt.primal_res / (1.0 + b_norm);
+                let rel_dual = kkt.dual_res / (1.0 + c_norm);
+                omega = pid.update(p, omega, dx, dy, rel_primal, rel_dual);
                 for (src, dst) in [(&self.x_t, &mut self.x_anchor), (&self.y_t, &mut self.y_anchor)] {
                     b.copy(src, dst).map_err(be)?;
                 }
@@ -336,7 +364,6 @@ impl<'a, B: Backend> Solver<'a, B> {
                 b.copy(&self.y_t, &mut self.y).map_err(be)?;
                 k = 0;
                 restarts += 1;
-                ref_residual = None;
                 prev_residual = f64::INFINITY;
             }
         };
@@ -357,5 +384,71 @@ impl<'a, B: Backend> Solver<'a, B> {
             restarts,
             solve_time: start.elapsed(),
         })
+    }
+}
+
+/// The PID primal-weight controller from cuPDLPx, with its safeguard: when
+/// the displacements or the residual balance leave a sane range, fall back to
+/// the weight from the restart whose relative primal and dual residuals were
+/// closest, and clear the controller state.
+struct PidState {
+    integral: f64,
+    prev_error: Option<f64>,
+    best_weight: f64,
+    best_balance: f64,
+}
+
+impl PidState {
+    fn new(omega: f64) -> Self {
+        Self { integral: 0.0, prev_error: None, best_weight: omega, best_balance: f64::INFINITY }
+    }
+
+    /// New weight after a restart with displacements `dx = ‖x_t - x_anchor‖`
+    /// and `dy = ‖y_t - y_anchor‖`.
+    fn update(&mut self, p: &SolverParams, omega: f64, dx: f64, dy: f64, rel_primal: f64, rel_dual: f64) -> f64 {
+        let sane = |v: f64| (1e-16..=1e12).contains(&v);
+        let ratio = rel_dual / rel_primal;
+        if !sane(dx) || !sane(dy) || !(1e-8..=1e8).contains(&ratio) {
+            self.integral = 0.0;
+            self.prev_error = None;
+            return self.best_weight;
+        }
+        // Positive error: the scaled primal displacement is too large.
+        let e = (omega * dx / dy).ln();
+        self.integral = p.pid_discount * self.integral + e;
+        let derivative = self.prev_error.map_or(0.0, |prev| e - prev);
+        self.prev_error = Some(e);
+        let next = (omega.ln() - (p.pid_kp * e + p.pid_ki * self.integral + p.pid_kd * derivative)).exp();
+        let balance = ratio.log10().abs();
+        if balance < self.best_balance {
+            self.best_balance = balance;
+            self.best_weight = next;
+        }
+        next
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pid_moves_weight_toward_displacement_ratio() {
+        let p = SolverParams::default();
+        let mut pid = PidState::new(1.0);
+        // Dual displacement 100x the primal one: ω should rise to about 100.
+        let w = pid.update(&p, 1.0, 1e-2, 1.0, 1e-3, 1e-3);
+        assert!((w.ln() - 100f64.ln()).abs() < 0.1, "{w}");
+    }
+
+    #[test]
+    fn pid_safeguard_restores_best_weight() {
+        let p = SolverParams::default();
+        let mut pid = PidState::new(1.0);
+        let best = pid.update(&p, 1.0, 1.0, 4.0, 1e-3, 1e-3); // balanced residuals
+        pid.update(&p, best, 1.0, 9.0, 1e-3, 1e-1); // less balanced
+        // A tiny displacement trips the safeguard.
+        assert_eq!(pid.update(&p, 7.0, 1e-20, 1.0, 1e-3, 1e-3), best);
+        assert_eq!(pid.integral, 0.0);
     }
 }

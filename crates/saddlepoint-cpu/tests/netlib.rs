@@ -16,11 +16,11 @@ const QUICK: &[&str] = &[
 ];
 
 /// Slower; run with `cargo test --release -- --ignored`.
-const SLOW: &[&str] = &["25fv47", "80bau3b", "scrs8", "stair"];
+const SLOW: &[&str] = &["25fv47", "80bau3b", "scrs8", "stair", "perold"];
 
-/// Not yet solved within the iteration limit (Phase 2 work: PID primal
-/// weight, better restarts, infeasibility detection on klein1).
-const KNOWN_HARD: &[&str] = &["greenbea", "perold", "klein1"];
+/// Not yet solved within the iteration limit: greenbea (#1) and klein1
+/// infeasibility detection (#2).
+const KNOWN_HARD: &[&str] = &["greenbea", "klein1"];
 
 fn data_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/netlib")

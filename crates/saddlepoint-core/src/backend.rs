@@ -82,9 +82,6 @@ pub trait Backend {
 
     /// Reflected Halpern update
     /// `z = w ((1 + ρ) z_t - ρ z) + (1 - w) anchor`.
-    ///
-    /// When `want_residual` is set, also returns `‖z_t - z‖²` computed from
-    /// the values before the update; otherwise returns 0.
     fn halpern_step(
         &self,
         z: &mut Self::Vector,
@@ -92,8 +89,7 @@ pub trait Backend {
         anchor: &Self::Vector,
         w: f64,
         rho: f64,
-        want_residual: bool,
-    ) -> Result<f64, Self::Error>;
+    ) -> Result<(), Self::Error>;
 
     /// `‖a - b‖²`.
     fn distance_sq(&self, a: &Self::Vector, b: &Self::Vector) -> Result<f64, Self::Error>;
@@ -101,6 +97,8 @@ pub trait Backend {
     fn sub(&self, a: &Self::Vector, b: &Self::Vector, out: &mut Self::Vector) -> Result<(), Self::Error>;
     /// `‖v‖²`.
     fn norm_sq(&self, v: &Self::Vector) -> Result<f64, Self::Error>;
+    /// `aᵀb`.
+    fn dot(&self, a: &Self::Vector, b: &Self::Vector) -> Result<f64, Self::Error>;
     /// `v *= alpha`.
     fn scale(&self, v: &mut Self::Vector, alpha: f64) -> Result<(), Self::Error>;
 

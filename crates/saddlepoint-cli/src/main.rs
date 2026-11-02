@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use saddlepoint_core::{SolverParams, Status, solve};
 use saddlepoint_cpu::CpuBackend;
 
-const USAGE: &str = "usage: saddlepoint FILE.mps [--tol T] [--max-iter N] [--time-limit SECONDS] [--log N] [--quiet]";
+const USAGE: &str = "usage: saddlepoint FILE.mps [--tol T] [--max-iter N] [--time-limit SECONDS] [--log N] [--quiet]
+       tuning: --check-every N --reflection R --necessary B --sufficient B --artificial B
+               --kp K --ki K --kd K --geo-passes N --ruiz N";
 
 fn main() -> ExitCode {
     match run() {
@@ -30,6 +32,16 @@ fn run() -> Result<ExitCode, String> {
             "--max-iter" => params.max_iterations = parse(&value("--max-iter")?)?,
             "--time-limit" => params.time_limit = Some(Duration::from_secs_f64(parse(&value("--time-limit")?)?)),
             "--log" => params.log_every_checks = parse(&value("--log")?)?,
+            "--check-every" => params.check_every = parse(&value(&a)?)?,
+            "--reflection" => params.reflection = parse(&value(&a)?)?,
+            "--necessary" => params.restart_necessary = parse(&value(&a)?)?,
+            "--sufficient" => params.restart_sufficient = parse(&value(&a)?)?,
+            "--artificial" => params.restart_artificial = parse(&value(&a)?)?,
+            "--kp" => params.pid_kp = parse(&value(&a)?)?,
+            "--ki" => params.pid_ki = parse(&value(&a)?)?,
+            "--kd" => params.pid_kd = parse(&value(&a)?)?,
+            "--geo-passes" => params.scaling.geometric_mean_passes = parse(&value(&a)?)?,
+            "--ruiz" => params.scaling.ruiz_iterations = parse(&value(&a)?)?,
             "--quiet" => params.log_every_checks = 0,
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -56,8 +68,8 @@ fn run() -> Result<ExitCode, String> {
     );
     if params.log_every_checks > 0 {
         eprintln!(
-            "{:>9} {:>14} {:>14} {:>9} {:>9} {:>9} {:>9} {:>5} {:>9}",
-            "iter", "primal obj", "dual obj", "p.res", "d.res", "gap", "weight", "rst", "time"
+            "{:>9} {:>14} {:>14} {:>9} {:>9} {:>9} {:>9} {:>5} {:>9} {:>7} {:>9}",
+            "iter", "primal obj", "dual obj", "p.res", "d.res", "gap", "weight", "rst", "time", "epoch", "r/r0"
         );
     }
     let s = solve(&backend, &problem, &params).map_err(|e| e.to_string())?;

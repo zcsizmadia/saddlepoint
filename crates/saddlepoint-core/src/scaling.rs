@@ -13,6 +13,8 @@ use crate::problem::{CsrMatrix, LpProblem};
 
 #[derive(Clone, Debug)]
 pub struct ScalingParams {
+    /// Row-then-column geometric mean passes (as in Gurobi and cuPDLPx).
+    pub geometric_mean_passes: usize,
     pub ruiz_iterations: usize,
     /// Pock-Chambolle exponent; `None` disables the step.
     pub pock_chambolle_alpha: Option<f64>,
@@ -22,7 +24,12 @@ pub struct ScalingParams {
 
 impl Default for ScalingParams {
     fn default() -> Self {
-        Self { ruiz_iterations: 10, pock_chambolle_alpha: Some(1.0), bound_objective_rescaling: true }
+        Self {
+            geometric_mean_passes: 12,
+            ruiz_iterations: 10,
+            pock_chambolle_alpha: Some(1.0),
+            bound_objective_rescaling: true,
+        }
     }
 }
 
@@ -49,6 +56,16 @@ impl ScaledProblem {
         let mut row_scale = vec![1.0; m];
         let mut col_scale = vec![1.0; n];
 
+        let ones_m = vec![1.0; m];
+        let ones_n = vec![1.0; n];
+        for _ in 0..params.geometric_mean_passes {
+            let (rmin, rmax, _, _) = min_max(&a);
+            let r: Vec<f64> = rmin.iter().zip(&rmax).map(|(lo, hi)| inv_sqrt(lo * hi)).collect();
+            apply(&mut a, &mut row_scale, &mut col_scale, &r, &ones_n);
+            let (_, _, cmin, cmax) = min_max(&a);
+            let c: Vec<f64> = cmin.iter().zip(&cmax).map(|(lo, hi)| inv_sqrt(lo * hi)).collect();
+            apply(&mut a, &mut row_scale, &mut col_scale, &ones_m, &c);
+        }
         for _ in 0..params.ruiz_iterations {
             let (rmax, cmax) = abs_stats(&a, |v, acc| acc.max(v));
             let r: Vec<f64> = rmax.iter().map(|&v| inv_sqrt(v)).collect();
@@ -56,8 +73,8 @@ impl ScaledProblem {
             apply(&mut a, &mut row_scale, &mut col_scale, &r, &c);
         }
         if let Some(alpha) = params.pock_chambolle_alpha {
-            let (rsum, _) = abs_stats(&a, |v, acc| acc + v.powf(2.0 - alpha));
-            let (_, csum) = abs_stats(&a, |v, acc| acc + v.powf(alpha));
+            let (rsum, _) = abs_stats(&a, |v, acc| acc + v.powf(alpha));
+            let (_, csum) = abs_stats(&a, |v, acc| acc + v.powf(2.0 - alpha));
             let r: Vec<f64> = rsum.iter().map(|&v| inv_sqrt(v)).collect();
             let c: Vec<f64> = csum.iter().map(|&v| inv_sqrt(v)).collect();
             apply(&mut a, &mut row_scale, &mut col_scale, &r, &c);
@@ -135,6 +152,29 @@ fn abs_stats(a: &CsrMatrix, f: impl Fn(f64, f64) -> f64) -> (Vec<f64>, Vec<f64>)
         }
     }
     (rows, cols)
+}
+
+/// Smallest and largest nonzero magnitude per row and per column (0 for
+/// empty ones, which `inv_sqrt` maps to a factor of 1).
+fn min_max(a: &CsrMatrix) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>) {
+    let (mut rmin, mut rmax) = (vec![f64::INFINITY; a.nrows], vec![0.0f64; a.nrows]);
+    let (mut cmin, mut cmax) = (vec![f64::INFINITY; a.ncols], vec![0.0f64; a.ncols]);
+    for i in 0..a.nrows {
+        let (idx, vals) = a.row(i);
+        for (&j, &v) in idx.iter().zip(vals) {
+            let v = v.abs();
+            rmin[i] = rmin[i].min(v);
+            rmax[i] = rmax[i].max(v);
+            cmin[j] = cmin[j].min(v);
+            cmax[j] = cmax[j].max(v);
+        }
+    }
+    for (lo, hi) in rmin.iter_mut().zip(&rmax).chain(cmin.iter_mut().zip(&cmax)) {
+        if *hi == 0.0 {
+            *lo = 0.0;
+        }
+    }
+    (rmin, rmax, cmin, cmax)
 }
 
 fn apply(a: &mut CsrMatrix, row_scale: &mut [f64], col_scale: &mut [f64], r: &[f64], c: &[f64]) {
@@ -225,8 +265,12 @@ mod tests {
     #[test]
     fn ruiz_equilibrates_rows_and_columns() {
         let p = sample();
-        let params =
-            ScalingParams { ruiz_iterations: 30, pock_chambolle_alpha: None, bound_objective_rescaling: false };
+        let params = ScalingParams {
+            geometric_mean_passes: 0,
+            ruiz_iterations: 30,
+            pock_chambolle_alpha: None,
+            bound_objective_rescaling: false,
+        };
         let s = ScaledProblem::new(&p, &params);
         let (rmax, cmax) = abs_stats(&s.a, |v, acc| acc.max(v));
         for v in rmax.iter().chain(&cmax) {

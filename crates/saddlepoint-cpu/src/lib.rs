@@ -181,11 +181,9 @@ impl Backend for CpuBackend {
         anchor: &Vec<f64>,
         w: f64,
         rho: f64,
-        want_residual: bool,
-    ) -> Result<f64, Infallible> {
-        let r = if want_residual { sum1(z.len(), |i| (z_t[i] - z[i]).powi(2)) } else { 0.0 };
+    ) -> Result<(), Infallible> {
         for_each(z, |i, o| *o = w * ((1.0 + rho) * z_t[i] - rho * *o) + (1.0 - w) * anchor[i]);
-        Ok(r)
+        Ok(())
     }
 
     fn distance_sq(&self, a: &Vec<f64>, b: &Vec<f64>) -> Result<f64, Infallible> {
@@ -199,6 +197,10 @@ impl Backend for CpuBackend {
 
     fn norm_sq(&self, v: &Vec<f64>) -> Result<f64, Infallible> {
         Ok(sum1(v.len(), |i| v[i] * v[i]))
+    }
+
+    fn dot(&self, a: &Vec<f64>, b: &Vec<f64>) -> Result<f64, Infallible> {
+        Ok(sum1(a.len(), |i| a[i] * b[i]))
     }
 
     fn scale(&self, v: &mut Vec<f64>, alpha: f64) -> Result<(), Infallible> {
