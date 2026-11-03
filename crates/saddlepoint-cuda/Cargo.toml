@@ -9,7 +9,14 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-cudarc.workspace = true
+cudarc = { workspace = true, features = ["cusparse"] }
+saddlepoint-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+saddlepoint-cpu.workspace = true
+saddlepoint-io.workspace = true
+saddlepoint-check.workspace = true
 
 [[bin]]
 name = "sp-bandwidth"

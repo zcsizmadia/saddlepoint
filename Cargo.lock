@@ -110,6 +110,7 @@ dependencies = [
  "saddlepoint-check",
  "saddlepoint-core",
  "saddlepoint-cpu",
+ "saddlepoint-cuda",
  "saddlepoint-io",
 ]
 
@@ -135,6 +136,11 @@ name = "saddlepoint-cuda"
 version = "0.0.1"
 dependencies = [
  "cudarc",
+ "saddlepoint-check",
+ "saddlepoint-core",
+ "saddlepoint-cpu",
+ "saddlepoint-io",
+ "thiserror",
 ]
 
 [[package]]
