@@ -4,12 +4,12 @@
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use saddlepoint_core::{Backend, LpProblem, Solution, SolverParams, Status, solve};
+use saddlepoint_core::{Backend, LpProblem, Solution, SolverParams, Status, Termination, solve};
 use saddlepoint_cpu::CpuBackend;
 use saddlepoint_cuda::CudaBackend;
 
 const USAGE: &str = "usage: saddlepoint FILE.mps [--tol T] [--max-iter N] [--time-limit SECONDS] [--log N] [--quiet]
-                   [--gpu] [--device N]
+                   [--gpu] [--device N] [--termination projected|cupdlpx]
        tuning: --check-every N --reflection R --necessary B --sufficient B --artificial B
                --kp K --ki K --kd K --geo-passes N --ruiz N";
 
@@ -48,6 +48,7 @@ fn run() -> Result<ExitCode, String> {
             "--quiet" => params.log_every_checks = 0,
             "--gpu" => device = Some(device.unwrap_or(0)),
             "--device" => device = Some(parse(&value(&a)?)?),
+            "--termination" => params.termination = parse_termination(&value(&a)?)?,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(ExitCode::SUCCESS);
@@ -100,6 +101,15 @@ fn run_on<B: Backend>(backend: &B, problem: &LpProblem, params: &SolverParams) -
         );
     }
     solve(backend, problem, params).map_err(|e| e.to_string())
+}
+
+/// `projected` (default, checker-verified) or `cupdlpx` (cuPDLPx's step-based measure).
+fn parse_termination(s: &str) -> Result<Termination, String> {
+    match s {
+        "projected" => Ok(Termination::Projected),
+        "cupdlpx" => Ok(Termination::StepImplied),
+        _ => Err(format!("bad --termination {s}: expected projected or cupdlpx")),
+    }
 }
 
 fn parse<T: std::str::FromStr>(s: &str) -> Result<T, String> {

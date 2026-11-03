@@ -12,12 +12,12 @@ use std::io::Write;
 use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
 
-use saddlepoint_core::{Backend, LpProblem, SolverParams, solve};
+use saddlepoint_core::{Backend, LpProblem, SolverParams, Termination, solve};
 use saddlepoint_cpu::CpuBackend;
 use saddlepoint_cuda::CudaBackend;
 
 const USAGE: &str = "usage: sp-bench [--solvers cpu,gpu,cupdlpx] [--tol T] [--time-limit SECONDS] [--device N]
-                [--cupdlpx PATH] [--out FILE.csv] FILES...";
+                [--termination projected|cupdlpx] [--cupdlpx PATH] [--out FILE.csv] FILES...";
 
 const HEADER: &str =
     "instance,rows,cols,nnz,solver,status,iterations,solve_s,total_s,objective,rel_primal,rel_dual,rel_gap";
@@ -27,6 +27,7 @@ struct Options {
     tol: f64,
     time_limit: f64,
     device: usize,
+    termination: Termination,
     cupdlpx: Option<String>,
     out: Option<String>,
     files: Vec<String>,
@@ -48,6 +49,7 @@ fn parse_args() -> Result<Options, String> {
         tol: 1e-4,
         time_limit: 600.0,
         device: 0,
+        termination: Termination::Projected,
         cupdlpx: None,
         out: None,
         files: Vec::new(),
@@ -60,6 +62,13 @@ fn parse_args() -> Result<Options, String> {
             "--tol" => o.tol = parse(&value()?)?,
             "--time-limit" => o.time_limit = parse(&value()?)?,
             "--device" => o.device = parse(&value()?)?,
+            "--termination" => {
+                o.termination = match value()?.as_str() {
+                    "projected" => Termination::Projected,
+                    "cupdlpx" => Termination::StepImplied,
+                    t => return Err(format!("bad --termination {t}: expected projected or cupdlpx")),
+                }
+            }
             "--cupdlpx" => o.cupdlpx = Some(value()?),
             "--out" => o.out = Some(value()?),
             "-h" | "--help" => return Err(USAGE.into()),
@@ -105,6 +114,7 @@ fn run() -> Result<(), String> {
         tolerance: o.tol,
         time_limit: Some(Duration::from_secs_f64(o.time_limit)),
         log_every_checks: 0,
+        termination: o.termination,
         ..Default::default()
     };
 
@@ -118,7 +128,10 @@ fn run() -> Result<(), String> {
                 "gpu" => ours(gpu.as_ref().expect("created above"), &problem, &params),
                 _ => cupdlpx(o.cupdlpx.as_deref().expect("checked"), file, &o),
             };
-            let line = format!("{size},{solver},{row}");
+            // saddlepoint rows run with cuPDLPx's termination test are labelled `cpu+step` / `gpu+step`.
+            let step = o.termination == Termination::StepImplied && solver != "cupdlpx";
+            let label = if step { format!("{solver}+step") } else { solver.clone() };
+            let line = format!("{size},{label},{row}");
             println!("{line}");
             if let Some(f) = out.as_mut() {
                 emit(f, &line)?;

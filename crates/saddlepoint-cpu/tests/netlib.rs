@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use saddlepoint_core::{SolverParams, Status, solve};
+use saddlepoint_core::{SolverParams, Status, Termination, solve};
 use saddlepoint_cpu::CpuBackend;
 
 const TOL: f64 = 1e-6;
@@ -40,9 +40,15 @@ fn reference(name: &str) -> (String, Option<f64>) {
     panic!("{name} missing from reference.csv");
 }
 
-fn run(name: &str) -> Result<(), String> {
+fn run(name: &str, termination: Termination) -> Result<(), String> {
     let p = saddlepoint_io::read_mps_file(data_dir().join(format!("{name}.mps"))).map_err(|e| e.to_string())?;
-    let params = SolverParams { tolerance: TOL, ..Default::default() };
+    let params = SolverParams { tolerance: TOL, termination, ..Default::default() };
+    // cuPDLPx's step-based test stops earlier, so the projected measures it is
+    // checked against may miss the tolerance by a margin.
+    let (check_tol, obj_tol) = match termination {
+        Termination::Projected => (2.0 * TOL, 1e-5),
+        Termination::StepImplied => (100.0 * TOL, 1e-4),
+    };
     let s = solve(&CpuBackend::new(), &p, &params).map_err(|e| e.to_string())?;
     let (status, objective) = reference(name);
     match status.as_str() {
@@ -50,10 +56,10 @@ fn run(name: &str) -> Result<(), String> {
             if s.status != Status::Optimal {
                 return Err(format!("{name}: status {:?} after {} iterations", s.status, s.iterations));
             }
-            saddlepoint_check::check(&p, &s.x, &s.y).verify(2.0 * TOL).map_err(|e| format!("{name}: {e}"))?;
+            saddlepoint_check::check(&p, &s.x, &s.y).verify(check_tol).map_err(|e| format!("{name}: {e}"))?;
             let r = objective.unwrap();
             let err = (s.objective - r).abs() / (1.0 + r.abs());
-            if err > 1e-5 {
+            if err > obj_tol {
                 return Err(format!("{name}: objective {} vs HiGHS {r} (relative {err:.2e})", s.objective));
             }
         }
@@ -66,13 +72,22 @@ fn run(name: &str) -> Result<(), String> {
 }
 
 fn run_all(names: &[&str]) {
-    let failures: Vec<String> = names.iter().filter_map(|n| run(n).err()).collect();
+    run_all_with(names, Termination::Projected);
+}
+
+fn run_all_with(names: &[&str], termination: Termination) {
+    let failures: Vec<String> = names.iter().filter_map(|n| run(n, termination).err()).collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 fn netlib_quick() {
     run_all(QUICK);
+}
+
+#[test]
+fn netlib_quick_cupdlpx_termination() {
+    run_all_with(QUICK, Termination::StepImplied);
 }
 
 #[test]
