@@ -13,6 +13,10 @@ publish = false
 name = "saddlepoint"
 path = "src/main.rs"
 
+[[bin]]
+name = "sp-bench"
+path = "src/bin/sp-bench.rs"
+
 [dependencies]
 saddlepoint-core.workspace = true
 saddlepoint-cpu.workspace = true

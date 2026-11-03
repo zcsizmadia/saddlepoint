@@ -47,6 +47,11 @@ cargo run --release -p saddlepoint-cuda --example speedup                   # GP
   space. Infeasibility is detected from the iterate difference since the last
   restart.
 
+## Benchmarks
+
+[`bench/README.md`](bench/README.md) compares saddlepoint (CPU and GPU) with cuPDLPx on
+MIPLIB 2017 LP relaxations; `sp-bench` and `scripts/fetch_miplib.sh` reproduce it.
+
 ## Testing
 
 ```sh
