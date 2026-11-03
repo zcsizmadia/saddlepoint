@@ -18,3 +18,4 @@ saddlepoint-core.workspace = true
 saddlepoint-cpu.workspace = true
 saddlepoint-io.workspace = true
 saddlepoint-check.workspace = true
+saddlepoint-cuda.workspace = true
