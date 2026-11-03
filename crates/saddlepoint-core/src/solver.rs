@@ -221,6 +221,7 @@ impl<'a, B: Backend> Solver<'a, B> {
         Ok(lambda.sqrt() * 1.01)
     }
 
+    /// KKT measures of `(x_t, y_t)`. Leaves `A'ᵀ y_t` in `tmp_n`.
     fn kkt(&mut self) -> Result<Kkt, SolveError> {
         let b = self.backend;
         let f = self.scaled.objective_factor();
@@ -310,16 +311,22 @@ impl<'a, B: Backend> Solver<'a, B> {
             if k == 0 {
                 anchor_residual = residual;
             }
+            // The step-based dual residual needs x from before the Halpern update.
+            let measured = if check {
+                let kkt = self.kkt()?;
+                let step =
+                    b.step_dual_residual_sq(&self.dev, &self.x, &self.x_t, &self.aty, &self.tmp_n, tau).map_err(be)?;
+                Some((kkt, step.sqrt()))
+            } else {
+                None
+            };
             let w = (k + 1) as f64 / (k + 2) as f64;
             b.halpern_step(&mut self.x, &self.x_t, &self.x_anchor, w, p.reflection).map_err(be)?;
             b.halpern_step(&mut self.y, &self.y_t, &self.y_anchor, w, p.reflection).map_err(be)?;
             k += 1;
 
-            if !check {
-                continue;
-            }
+            let Some((kkt, step_dual)) = measured else { continue };
             checks += 1;
-            let kkt = self.kkt()?;
             if p.log_every_checks > 0 && checks.is_multiple_of(p.log_every_checks) {
                 eprintln!(
                     "{total:>9} {:>14.6e} {:>14.6e} {:>9.2e} {:>9.2e} {:>9.2e} {omega:>9.2e} {restarts:>5} {:>8.2}s {k:>7} {:>9.2e}",
@@ -355,7 +362,10 @@ impl<'a, B: Backend> Solver<'a, B> {
                 let dx = b.distance_sq(&self.x_t, &self.x_anchor).map_err(be)?.sqrt();
                 let dy = b.distance_sq(&self.y_t, &self.y_anchor).map_err(be)?.sqrt();
                 let rel_primal = kkt.primal_res / (1.0 + b_norm);
-                let rel_dual = kkt.dual_res / (1.0 + c_norm);
+                // The PID balances against cuPDLPx's step-based dual residual. The
+                // projected one (used for termination) is identically zero when
+                // every variable is bounded, which would pin the weight.
+                let rel_dual = step_dual / (1.0 + c_norm);
                 omega = pid.update(p, omega, dx, dy, rel_primal, rel_dual);
                 for (src, dst) in [(&self.x_t, &mut self.x_anchor), (&self.y_t, &mut self.y_anchor)] {
                     b.copy(src, dst).map_err(be)?;

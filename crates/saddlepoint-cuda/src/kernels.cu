@@ -207,3 +207,16 @@ extern "C" __global__ void red_dual_ray_cols(const double* __restrict__ atdy, co
     }
     block_store<2>(s, out, base);
 }
+
+// sum ((aty - aty_t - (x_t - x) / tau) * factor)^2: cuPDLPx's dual residual
+extern "C" __global__ void red_step_dual(const double* __restrict__ x, const double* __restrict__ x_t,
+                                         const double* __restrict__ aty, const double* __restrict__ aty_t,
+                                         const double* __restrict__ factor, double inv_tau, i64 n, double* out,
+                                         i64 base) {
+    double s[1] = {0.0};
+    GRID_LOOP(j, n) {
+        const double r = (aty[j] - aty_t[j] - (x_t[j] - x[j]) * inv_tau) * factor[j];
+        s[0] += r * r;
+    }
+    block_store<1>(s, out, base);
+}

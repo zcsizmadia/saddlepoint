@@ -124,6 +124,12 @@ fn compare(name: &str, gpu: &CudaBackend) {
     close(&format!("{name} dual ray violation"), dr.0.violation_sq, dr.1.violation_sq);
     close(&format!("{name} dual ray norm"), dr.0.norm_sq, dr.1.norm_sq);
 
+    let sd = (
+        cpu.step_dual_residual_sq(&pc, &x, &ct, &cn, &cs, tau).unwrap(),
+        gpu.step_dual_residual_sq(&pg, &gx, &gt, &gn, &gs, tau).unwrap(),
+    );
+    close(&format!("{name} step dual residual"), sd.0, sd.1);
+
     // Copy and round trip.
     let mut gc = up(&vec![0.0; n]);
     gpu.copy(&gx, &mut gc).unwrap();
