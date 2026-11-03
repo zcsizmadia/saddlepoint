@@ -75,6 +75,35 @@ a lot, since it is small next to the norms the tolerance is relative to.
   weight forever. It now balances against cuPDLPx's step-based dual
   residual. That cut supportcase10 from 193,024 to 19,264 iterations and
   cygnet from 60,480 to 22,720.
-- **The remaining iteration gap** is about 2x on cygnet, s100 and rail507.
-  On irish-electricity the opposite holds: we converge in 87k iterations
-  and cuPDLPx does not in 1M.
+- **The remaining gap is the stopping test, not convergence.** With
+  cuPDLPx's test (`--termination cupdlpx`, below) our iteration counts are
+  0.64-1.25x of cuPDLPx's. Our default test is stricter: its dual
+  objective is a true bound, and the answer passes the independent KKT check
+  at the requested tolerance. On irish-electricity we converge in 87k
+  iterations and cuPDLPx does not in 1M.
+
+### Same stopping test as cuPDLPx
+
+`--termination cupdlpx` measures the dual side the way cuPDLPx does: the
+reduced cost implied by the primal step, `λ = c - Aᵀy + (x_t - x)/τ`, its
+residual, and the dual objective `λ·x_t` plus the row terms. GPU, 1e-4,
+300 s; raw rows in [`results/2026-11-03-rtx-a1000-step.csv`](results/2026-11-03-rtx-a1000-step.csv).
+The last column is the relative gap of our answer as the independent
+checker measures it, against the 1e-4 asked for.
+
+| instance | GPU, cuPDLPx test | iterations (ours / cuPDLPx) | cuPDLPx | checked gap |
+|---|--:|--:|--:|--:|
+| rail507 | 0.46 s | 1,920 / 1,800 | 0.32 s | 4.0e-4 |
+| irish-electricity | 31.2 s | 102,912 / >1,067,600 | limit | 1.5e-7 |
+| supportcase10 | 6.28 s | 18,112 / 18,000 | 5.96 s | 4.5e-4 |
+| ex10 | 0.29 s | 384 / 600 | 0.25 s | 2.8e-4 |
+| physiciansched3-3 | limit | – | limit | – |
+| s100 | 101 s | 115,712 / 92,800 | 70.9 s | 1.9e-3 |
+| savsched1 | 0.84 s | 512 / 800 | 0.80 s | 1.9e-4 |
+| neos-5052403-cygnet | 12.7 s | 9,792 / 11,200 | 13.2 s | 6.1e-4 |
+| square41 | limit | – | limit | – |
+
+So with the same test we are at cuPDLPx's speed on cygnet, within 5-45%
+elsewhere, and the cost of that test is an answer whose projected gap is
+2-20x the tolerance (irish-electricity aside). irish-electricity needs more iterations under this test,
+because there the step-based dual residual is the slower measure.

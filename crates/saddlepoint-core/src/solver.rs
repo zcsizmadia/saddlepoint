@@ -48,6 +48,23 @@ pub struct SolverParams {
     pub scaling: ScalingParams,
     /// Print a progress line every this many checks (0 = silent).
     pub log_every_checks: u64,
+    pub termination: Termination,
+}
+
+/// How the dual side of the termination test is measured. The primal
+/// residual is the same in both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Termination {
+    /// Dual residual and objective of `y_t` with the reduced cost `c - Aᵀy_t`
+    /// projected onto the bounds: the dual objective is a true bound, and the
+    /// answer passes the independent KKT check at the same tolerance.
+    #[default]
+    Projected,
+    /// cuPDLPx's measure: the reduced cost `λ = c - Aᵀy + (x_t - x)/τ` implied by
+    /// the primal step, with dual objective `λ·x_t` plus the row terms. It stops
+    /// sooner (up to about 2x on some MIPLIB LPs), but the answer can miss the projected
+    /// gap by several times the tolerance. Use it to compare with cuPDLPx.
+    StepImplied,
 }
 
 impl Default for SolverParams {
@@ -70,6 +87,7 @@ impl Default for SolverParams {
             power_iterations: 200,
             scaling: ScalingParams::default(),
             log_every_checks: 0,
+            termination: Termination::Projected,
         }
     }
 }
@@ -160,6 +178,7 @@ struct Solver<'a, B: Backend> {
     tmp_n: B::Vector,
     tmp_m: B::Vector,
     tmp_m2: B::Vector,
+    c: B::Vector,
 }
 
 impl<'a, B: Backend> Solver<'a, B> {
@@ -183,6 +202,7 @@ impl<'a, B: Backend> Solver<'a, B> {
             tmp_n: v(&zn)?,
             tmp_m: v(&zm)?,
             tmp_m2: v(&zm)?,
+            c: v(&scaled.c)?,
             backend,
             problem,
             params,
@@ -235,6 +255,19 @@ impl<'a, B: Backend> Solver<'a, B> {
             primal_res: ps.residual_sq.sqrt(),
             dual_res: ds.residual_sq.sqrt(),
         })
+    }
+
+    /// cuPDLPx's dual objective of `y_t`: the row terms of `y_t` plus `λ·x_t`, with
+    /// `λ = c - Aᵀy + (x_t - x)/τ` the reduced cost implied by the primal step.
+    /// Must run before the Halpern step, while `x` and `aty` are the step's inputs.
+    fn step_dual_objective(&mut self, tau: f64) -> Result<f64, SolveError> {
+        let b = self.backend;
+        // With `aty = c` the reduced cost is zero, so this is the row terms alone.
+        let rows = b.dual_stats(&self.dev, &self.y_t, &self.c).map_err(be)?.objective;
+        let dot = |u: &B::Vector, v: &B::Vector| b.dot(u, v).map_err(be);
+        let lx = dot(&self.c, &self.x_t)? - dot(&self.aty, &self.x_t)?
+            + (dot(&self.x_t, &self.x_t)? - dot(&self.x, &self.x_t)?) / tau;
+        Ok((rows + lx) * self.scaled.objective_factor() + self.problem.c0)
     }
 
     /// Fixed-point residual `‖z - T(z)‖_P` in the PDHG metric
@@ -316,7 +349,11 @@ impl<'a, B: Backend> Solver<'a, B> {
                 let kkt = self.kkt()?;
                 let step =
                     b.step_dual_residual_sq(&self.dev, &self.x, &self.x_t, &self.aty, &self.tmp_n, tau).map_err(be)?;
-                Some((kkt, step.sqrt()))
+                let step_obj = match p.termination {
+                    Termination::Projected => None,
+                    Termination::StepImplied => Some(self.step_dual_objective(tau)?),
+                };
+                Some((kkt, step.sqrt(), step_obj))
             } else {
                 None
             };
@@ -325,7 +362,7 @@ impl<'a, B: Backend> Solver<'a, B> {
             b.halpern_step(&mut self.y, &self.y_t, &self.y_anchor, w, p.reflection).map_err(be)?;
             k += 1;
 
-            let Some((kkt, step_dual)) = measured else { continue };
+            let Some((kkt, step_dual, step_obj)) = measured else { continue };
             checks += 1;
             if p.log_every_checks > 0 && checks.is_multiple_of(p.log_every_checks) {
                 eprintln!(
@@ -339,7 +376,11 @@ impl<'a, B: Backend> Solver<'a, B> {
                     residual / anchor_residual
                 );
             }
-            if kkt.converged(p.tolerance, b_norm, c_norm) {
+            let test = match step_obj {
+                None => kkt,
+                Some(dual_obj) => Kkt { dual_obj, dual_res: step_dual, ..kkt },
+            };
+            if test.converged(p.tolerance, b_norm, c_norm) {
                 break (Status::Optimal, kkt);
             }
             if let Some(s) = self.infeasibility()? {
