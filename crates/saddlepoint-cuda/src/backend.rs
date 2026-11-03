@@ -60,6 +60,7 @@ struct Kernels {
     red_primal_ray_cols: CudaFunction,
     red_dual_ray_rows: CudaFunction,
     red_dual_ray_cols: CudaFunction,
+    red_step_dual: CudaFunction,
 }
 
 impl Kernels {
@@ -80,6 +81,7 @@ impl Kernels {
             red_primal_ray_cols: f("red_primal_ray_cols")?,
             red_dual_ray_rows: f("red_dual_ray_rows")?,
             red_dual_ray_cols: f("red_dual_ray_cols")?,
+            red_step_dual: f("red_step_dual")?,
         })
     }
 }
@@ -345,6 +347,21 @@ impl Backend for CudaBackend {
         let cols = reduce!(self, self.k.red_dual_cols, aty.len(), 2, &mut off; &p.c, aty, &p.lv, &p.uv, &p.dual_factor);
         let t = self.collect(&[rows, cols])?;
         Ok(DualStats { residual_sq: t[1][0], objective: t[0][0] + t[1][1] })
+    }
+
+    fn step_dual_residual_sq(
+        &self,
+        p: &CudaProblem,
+        x: &CudaSlice<f64>,
+        x_t: &CudaSlice<f64>,
+        aty: &CudaSlice<f64>,
+        aty_t: &CudaSlice<f64>,
+        tau: f64,
+    ) -> Result<f64, CudaError> {
+        let mut off = 0;
+        let inv_tau = 1.0 / tau;
+        let s = reduce!(self, self.k.red_step_dual, x.len(), 1, &mut off; x, x_t, aty, aty_t, &p.dual_factor, &inv_tau);
+        Ok(self.collect(&[s])?[0][0])
     }
 
     fn primal_ray_stats(

@@ -106,6 +106,19 @@ pub trait Backend {
     fn primal_stats(&self, p: &Self::Problem, x: &Self::Vector, ax: &Self::Vector) -> Result<PrimalStats, Self::Error>;
     /// Dual residual and objective of `y` given `aty = A'ᵀ y`.
     fn dual_stats(&self, p: &Self::Problem, y: &Self::Vector, aty: &Self::Vector) -> Result<DualStats, Self::Error>;
+    /// cuPDLPx's dual residual, squared and in original units: with the
+    /// reduced cost `λ = c - aty + (x_t - x) / tau` that the primal step from
+    /// `x` implied, the residual of `y_t` is `c - aty_t - λ`, that is
+    /// `Σ ((aty - aty_t - (x_t - x) / tau) · dual_factor)²`.
+    fn step_dual_residual_sq(
+        &self,
+        p: &Self::Problem,
+        x: &Self::Vector,
+        x_t: &Self::Vector,
+        aty: &Self::Vector,
+        aty_t: &Self::Vector,
+        tau: f64,
+    ) -> Result<f64, Self::Error>;
 
     /// Treats `dx` as a candidate primal ray (dual infeasibility certificate).
     fn primal_ray_stats(

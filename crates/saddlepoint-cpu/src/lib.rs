@@ -223,6 +223,19 @@ impl Backend for CpuBackend {
         Ok(DualStats { residual_sq: res, objective: rows + cols })
     }
 
+    fn step_dual_residual_sq(
+        &self,
+        p: &CpuProblem,
+        x: &Vec<f64>,
+        x_t: &Vec<f64>,
+        aty: &Vec<f64>,
+        aty_t: &Vec<f64>,
+        tau: f64,
+    ) -> Result<f64, Infallible> {
+        let inv_tau = 1.0 / tau;
+        Ok(sum1(x.len(), |j| ((aty[j] - aty_t[j] - (x_t[j] - x[j]) * inv_tau) * p.dual_factor[j]).powi(2)))
+    }
+
     fn primal_ray_stats(&self, p: &CpuProblem, dx: &Vec<f64>, adx: &Vec<f64>) -> Result<RayStats, Infallible> {
         // A primal ray keeps A dx inside the recession cone of [lc, uc] and dx
         // inside that of [lv, uv].
